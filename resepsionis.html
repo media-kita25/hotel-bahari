@@ -126,7 +126,7 @@ async function get(url, params = {}) { return Api.handle(_api(url), params.actio
 async function post(url, data) { return Api.handle(_api(url), data.action, data); }
 
 /* ================= NOTIFIKASI PENGADUAN BARU ================= */
-let ac, suaraOn = true, known = null, notifTimer, notifCount = 0;
+let ac, master, suaraOn = true, known = null, notifTimer, notifCount = 0;
 const judulAsli = document.title;
 try { suaraOn = localStorage.getItem('hb-suara') !== '0'; } catch (e) {}
 function aktifkanAudio() {
@@ -134,18 +134,25 @@ function aktifkanAudio() {
 }
 document.addEventListener('click', aktifkanAudio);
 document.addEventListener('keydown', aktifkanAudio);
+function lonceng(t, f, vol) {   // satu pukulan lonceng: beberapa nada sebagian yang meluruh perlahan
+  [[1, 1, 1.8], [2, 0.6, 1.2], [2.76, 0.5, 0.9], [5.4, 0.3, 0.55], [8.93, 0.15, 0.3]].forEach(([r, a, d]) => {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine'; o.frequency.value = f * r;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol * a, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + d + 0.05);
+  });
+}
 function bunyi(mendesak) {
   if (!suaraOn || !ac || ac.state !== 'running') return;
-  for (let i = 0; i < (mendesak ? 3 : 2); i++) {
-    [880, 660].forEach((f, j) => {
-      const t = ac.currentTime + i * 0.9 + j * 0.28, o = ac.createOscillator(), g = ac.createGain();
-      o.type = 'sine'; o.frequency.value = f;
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.4, t + 0.03);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
-      o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.3);
-    });
+  if (!master) {   // kompresor menjaga suara tetap keras tapi tidak pecah
+    const k = ac.createDynamicsCompressor();
+    master = ac.createGain(); master.gain.value = 1;
+    master.connect(k); k.connect(ac.destination);
   }
+  const n = mendesak ? 4 : 2, jeda = mendesak ? 0.55 : 0.9;
+  for (let i = 0; i < n; i++) lonceng(ac.currentTime + i * jeda, 1318.5, 0.9);
 }
 function updateBtnSuara() { $('btnSuara').textContent = suaraOn ? '🔔 Suara: Aktif' : '🔕 Suara: Mati'; }
 function toggleSuara() {
