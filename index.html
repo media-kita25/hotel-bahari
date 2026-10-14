@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hotel Bahari – Pengaduan Tamu</title>
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><div class="wrap">
+  <div class="brand"><img src="logo.png" alt="Logo Hotel Bahari"><h1>Hotel Bahari</h1><span>Pusat pengaduan & layanan tamu</span></div>
+  <nav>
+    <a href="index.html" class="active">Form Layanan</a>
+    <a href="resepsionis.html">Resepsionis</a>
+  </nav>
+</div></header>
+
+<main class="wrap">
+<section class="grid">
+  <div class="card">
+    <h2>Sampaikan keluhan atau permintaan</h2>
+    <p class="sub">Tim resepsionis akan menindaklanjuti secepat mungkin.</p>
+    <div class="row">
+      <div><label for="nama">Nama tamu</label><input id="nama"></div>
+      <div><label for="kamar">Nomor kamar</label><input id="kamar" inputmode="numeric" placeholder="mis. 305"></div>
+    </div>
+    <div class="row">
+      <div><label for="kat">Kategori</label>
+        <select id="kat">
+          <option>Kebersihan kamar</option>
+          <option>Fasilitas rusak (AC, TV, air)</option>
+          <option>Kebisingan</option>
+          <option>Makanan & minuman</option>
+          <option>Permintaan layanan (handuk, bantal, dll.)</option>
+          <option>Lainnya</option>
+        </select></div>
+      <div><label for="pri">Tingkat mendesak</label>
+        <select id="pri"><option>Rendah</option><option selected>Sedang</option><option>Tinggi</option></select></div>
+    </div>
+    <label for="isi">Detail pengaduan</label>
+    <textarea id="isi" placeholder="Ceritakan masalah atau layanan yang Anda butuhkan"></textarea>
+    <div class="err" id="err"></div>
+    <button class="btn" id="btnKirim" onclick="kirim()">Kirim pengaduan</button>
+    <div class="ok" id="ok"></div>
+  </div>
+
+  <div class="card">
+    <h2>Cek status pengaduan</h2>
+    <p class="sub">Masukkan nomor tiket yang Anda terima.</p>
+    <label for="cari">Nomor tiket</label>
+    <input id="cari" placeholder="mis. ADU-A3F9C1" onkeydown="if(event.key==='Enter')cek()">
+    <button class="btn" onclick="cek()">Cek status</button>
+    <div id="hasil" style="margin-top:16px"></div>
+  </div>
+</section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+const API = 'api/pengaduan.php';
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = t => new Date(t).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+
+async function api(action, params = {}) { return Api.handle('pengaduan', action, params); }
+
+async function kirim() {
+  const nama = $('nama').value.trim();
+  const kamar = $('kamar').value.trim();
+  const isi = $('isi').value.trim();
+  if (!nama || !kamar || !isi) {
+    $('err').textContent = 'Isi nama, nomor kamar, dan detail pengaduan.';
+    return;
+  }
+  $('err').textContent = '';
+  $('btnKirim').disabled = true;
+  try {
+    const r = await api('kirim', {
+      nama, kamar, isi,
+      kategori: $('kat').value,
+      prioritas: $('pri').value
+    }, 'POST');
+    if (!r.ok) throw new Error(r.error);
+    ['nama','kamar','isi'].forEach(i => $(i).value = '');
+    const ok = $('ok');
+    ok.style.display = 'block';
+    ok.innerHTML = 'Pengaduan terkirim. Nomor tiket Anda: <b>' + r.kode + '</b><br>Simpan nomor ini untuk mengecek status.';
+    $('cari').value = r.kode;
+  } catch(e) {
+    $('err').textContent = e.message;
+  } finally {
+    $('btnKirim').disabled = false;
+  }
+}
+
+async function cek() {
+  const kode = $('cari').value.trim().toUpperCase();
+  if (!kode) { $('hasil').innerHTML = '<div class="err">Masukkan nomor tiket.</div>'; return; }
+  const r = await api('cek', {kode});
+  if (!r.ok) { $('hasil').innerHTML = '<div class="err">' + esc(r.error) + '</div>'; return; }
+  const t = r.data;
+  $('hasil').innerHTML = `<div class="tk ${t.prioritas}">
+    <div class="tk-h"><b>${t.kode}</b><span class="badge s-${t.status}">${t.status}</span></div>
+    <div class="meta">${esc(t.kategori)} · diterima ${fmt(t.waktu)}</div>
+    <p>${esc(t.isi)}</p>
+    ${t.balasan
+      ? `<div class="reply"><b>Balasan resepsionis:</b> ${esc(t.balasan)}</div>`
+      : '<div class="reply">Belum ada balasan. Pengaduan Anda sedang menunggu ditinjau.</div>'}
+  </div>`;
+}
+</script>
+</body>
+</html>

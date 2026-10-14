@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hotel Bahari – Dashboard Resepsionis</title>
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><div class="wrap">
+  <div class="brand"><img src="logo.png" alt="Logo Hotel Bahari"><h1>Hotel Bahari</h1><span>Dashboard Resepsionis</span></div>
+  <nav>
+    <a href="index.html">Form Layanan</a>
+    <a href="resepsionis.html" class="active">Resepsionis</a>
+    <a href="#" id="keluar" class="hide" onclick="keluar();return false">Keluar</a>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <div class="card login" id="login">
+    <h2>Masuk resepsionis</h2>
+    <p class="sub">Halaman ini khusus staf hotel.</p>
+    <label for="username">Email staf</label>
+    <input id="username" type="email" autocomplete="email">
+    <label for="pin">Kata sandi</label>
+    <input id="pin" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')masuk()">
+    <div class="err" id="perr"></div>
+    <button class="btn" onclick="masuk()">Masuk</button>
+  </div>
+
+  <div id="dash" class="hide">
+    <div class="tabs">
+      <button id="tb-list" aria-selected="true" onclick="tab('list')">Daftar Aduan</button>
+      <button id="tb-rekap" aria-selected="false" onclick="tab('rekap')">Rekap Bulanan</button>
+    </div>
+
+    <!-- TAB DAFTAR -->
+    <section id="v-list">
+      <div class="stats" id="stats"></div>
+      <div class="bar">
+        <select id="fs" onchange="draw()">
+          <option value="">Semua status</option><option>Baru</option><option>Diproses</option><option>Selesai</option>
+        </select>
+        <select id="fp" onchange="draw()">
+          <option value="">Semua prioritas</option><option>Tinggi</option><option>Sedang</option><option>Rendah</option>
+        </select>
+        <input id="fq" placeholder="Cari nama/kamar/ID..." oninput="debounceDraw()">
+        <button class="btn danger" onclick="hapusSelesai()">🗑 Hapus Selesai</button>
+      </div>
+      <div id="list"></div>
+    </section>
+
+    <!-- TAB REKAP -->
+    <section id="v-rekap" class="hide">
+      <div class="card">
+        <h2>Rekap Bulanan</h2>
+        <p class="sub">Ringkasan pengaduan & layanan per bulan.</p>
+        <div class="bar">
+          <label for="bulan" style="margin:0;align-self:center">Pilih bulan</label>
+          <input type="month" id="bulan" onchange="drawRekap()">
+          <button class="btn ghost" onclick="exportCSV()">⬇ Export CSV</button>
+        </div>
+      </div>
+      <div class="card"><h3>Statistik Bulan Ini</h3><div class="stats" id="rekap-stats" style="margin-top:12px"></div></div>
+      <div class="card"><h3>Aduan per Kategori</h3><div class="chart" id="rekap-kategori"></div></div>
+      <div class="card"><h3>Aduan per Prioritas</h3><div class="chart" id="rekap-prioritas"></div></div>
+      <div class="card">
+        <h3>Rekap 12 Bulan Terakhir</h3>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>Bulan</th><th class="num">Total</th><th class="num">Baru</th>
+              <th class="num">Diproses</th><th class="num">Selesai</th>
+              <th class="num">Tinggi</th><th class="num">Sedang</th><th class="num">Rendah</th>
+            </tr></thead>
+            <tbody id="rekap-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+const API_P = 'api/pengaduan.php';
+const API_R = 'api/rekap.php';
+const API_A = 'api/auth.php';
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = t => new Date(t).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+const ym = t => { const d = new Date(t); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); };
+const namaBulan = k => { const [y,m]=k.split('-'); return new Date(+y,+m-1,1).toLocaleDateString('id-ID',{month:'long',year:'numeric'}); };
+
+let isLogin = false;
+function tampil() {
+  isLogin = true;
+  $('login').classList.add('hide');
+  $('dash').classList.remove('hide');
+  $('keluar').classList.remove('hide');
+  if (!$('bulan').value) $('bulan').value = ym(Date.now());
+  draw();
+}
+async function keluar() { await post(API_A, {action:'logout'}); location.reload(); }
+get(API_A, {action:'me'}).then(r => { if (r.ok) tampil(); }).catch(() => {});
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+const _api = u => u.includes('rekap') ? 'rekap' : u.includes('auth') ? 'auth' : 'pengaduan';
+async function get(url, params = {}) { return Api.handle(_api(url), params.action, params); }
+async function post(url, data) { return Api.handle(_api(url), data.action, data); }
+
+/* ================= LOGIN ================= */
+async function masuk() {
+  const username = $('username').value.trim();
+  const pin = $('pin').value.trim();
+  if (!username || !pin) { $('perr').textContent = 'Isi email dan kata sandi.'; return; }
+  const r = await post(API_A, {action:'login', username, pin});
+  if (!r.ok) { $('perr').textContent = r.error; return; }
+  $('perr').textContent = '';
+  $('pin').value = '';
+  tampil();
+}
+
+/* ================= TABS ================= */
+function tab(v) {
+  $('v-list').classList.toggle('hide', v !== 'list');
+  $('v-rekap').classList.toggle('hide', v !== 'rekap');
+  $('tb-list').setAttribute('aria-selected', v === 'list');
+  $('tb-rekap').setAttribute('aria-selected', v === 'rekap');
+  if (v === 'rekap') drawRekap();
+}
+
+/* ================= AKSI ================= */
+async function setStatus(id, s) {
+  const r = $('r-' + id);
+  const balasan = r ? r.value.trim() : '';
+  const res = await post(API_P, {action:'update', kode:id, status:s, balasan});
+  if (!res.ok) { toast(res.error); return; }
+  toast('Tiket ' + id + ' → ' + s);
+  draw();
+}
+
+async function hapus(id) {
+  if (!confirm('Yakin hapus tiket ' + id + '?')) return;
+  const res = await post(API_P, {action:'hapus', kode:id});
+  if (!res.ok) { toast(res.error); return; }
+  toast('Tiket ' + id + ' dihapus');
+  draw();
+}
+
+async function hapusSelesai() {
+  if (!confirm('Hapus SEMUA tiket berstatus Selesai?')) return;
+  const res = await post(API_P, {action:'hapus_selesai'});
+  if (!res.ok) { toast(res.error); return; }
+  toast((res.terhapus || 0) + ' tiket dihapus');
+  draw();
+}
+
+/* ================= RENDER DAFTAR ================= */
+let drawTid;
+function debounceDraw() {
+  clearTimeout(drawTid);
+  drawTid = setTimeout(draw, 300);
+}
+
+async function draw() {
+  if (!isLogin) return;
+  const [s, l] = await Promise.all([
+    get(API_P, {action:'stats'}),
+    get(API_P, {
+      action:'list',
+      status: $('fs').value,
+      prioritas: $('fp').value,
+      q: $('fq').value.trim()
+    })
+  ]);
+  if (s.ok) {
+    const d = s.data;
+    $('stats').innerHTML = [
+      ['Total', d.total], ['Baru', d.baru], ['Diproses', d.diproses], ['Selesai', d.selesai]
+    ].map(([k,v]) => `<div class="stat"><b>${v||0}</b><span>${k}</span></div>`).join('');
+  }
+  if (!l.ok) { $('list').innerHTML = '<div class="err">' + esc(l.error) + '</div>'; return; }
+  const L = l.data;
+  $('list').innerHTML = L.length ? L.map(t => `
+    <div class="tk ${t.prioritas}">
+      <div class="tk-h">
+        <b>${t.kode} · Kamar ${esc(t.kamar)}</b>
+        <span class="badge s-${t.status}">${t.status}</span>
+      </div>
+      <div class="meta">${esc(t.nama)} · ${esc(t.kategori)} · prioritas ${t.prioritas.toLowerCase()} · ${fmt(t.waktu)}</div>
+      <p>${esc(t.isi)}</p>
+      ${t.balasan ? `<div class="reply"><b>Balasan:</b> ${esc(t.balasan)}</div>` : ''}
+      <div class="acts">
+        ${t.status !== 'Selesai' ? `<input id="r-${t.kode}" placeholder="Tulis balasan untuk tamu">` : ''}
+        ${t.status === 'Baru' ? `<button class="btn ghost" onclick="setStatus('${t.kode}','Diproses')">Proses</button>` : ''}
+        ${t.status !== 'Selesai' ? `<button class="btn ghost" onclick="setStatus('${t.kode}','Selesai')">Tandai selesai</button>` : ''}
+        <button class="btn danger" onclick="hapus('${t.kode}')">Hapus</button>
+      </div>
+    </div>`).join('') : '<div class="empty">Tidak ada pengaduan.</div>';
+}
+
+/* ================= RENDER REKAP ================= */
+async function drawRekap() {
+  if (!isLogin) return;
+  const bulan = $('bulan').value || ym(Date.now());
+  const [r, k, p, t12] = await Promise.all([
+    get(API_R, {action:'ringkasan', bulan}),
+    get(API_R, {action:'kategori', bulan}),
+    get(API_R, {action:'prioritas', bulan}),
+    get(API_R, {action:'tabel12'})
+  ]);
+
+  if (r.ok) {
+    const d = r.data;
+    $('rekap-stats').innerHTML = [
+      ['Total', d.total], ['Baru', d.baru], ['Diproses', d.diproses], ['Selesai', d.selesai]
+    ].map(([kk,v]) => `<div class="stat"><b>${v||0}</b><span>${kk}</span></div>`).join('');
+  }
+
+  if (k.ok) {
+    const arr = k.data;
+    const max = Math.max(1, ...arr.map(x => +x.jumlah));
+    $('rekap-kategori').innerHTML = arr.length ? arr.map(x => `
+      <div class="chart-row">
+        <span>${esc(x.kategori)}</span>
+        <div style="background:var(--line);border-radius:4px">
+          <div class="recap-bar" style="width:${x.jumlah/max*100}%"></div>
+        </div>
+        <b class="num">${x.jumlah}</b>
+      </div>`).join('') : '<div class="empty">Belum ada data.</div>';
+  }
+
+  if (p.ok) {
+    const map = Object.fromEntries(p.data.map(x => [x.prioritas, +x.jumlah]));
+    const arr = ['Tinggi','Sedang','Rendah'].map(x => [x, map[x] || 0]);
+    const max = Math.max(1, ...arr.map(x => x[1]));
+    $('rekap-prioritas').innerHTML = arr.map(([kk,v]) => `
+      <div class="chart-row">
+        <span>${kk}</span>
+        <div style="background:var(--line);border-radius:4px">
+          <div class="recap-bar" style="width:${v/max*100}%;background:${
+            kk === 'Tinggi' ? 'var(--new)' : kk === 'Sedang' ? 'var(--brass)' : 'var(--sea)'
+          }"></div>
+        </div>
+        <b class="num">${v}</b>
+      </div>`).join('');
+  }
+
+  if (t12.ok) {
+    const rows = t12.data;
+    const tot = rows.reduce((a,r) => ({
+      total: a.total + +r.total, baru: a.baru + +r.baru,
+      diproses: a.diproses + +r.diproses, selesai: a.selesai + +r.selesai,
+      tinggi: a.tinggi + +r.tinggi, sedang: a.sedang + +r.sedang,
+      rendah: a.rendah + +r.rendah
+    }), {total:0,baru:0,diproses:0,selesai:0,tinggi:0,sedang:0,rendah:0});
+
+    $('rekap-body').innerHTML = rows.map(r => `
+      <tr>
+        <td>${namaBulan(r.bulan)}</td>
+        <td class="num">${r.total}</td><td class="num">${r.baru}</td>
+        <td class="num">${r.diproses}</td><td class="num">${r.selesai}</td>
+        <td class="num">${r.tinggi}</td><td class="num">${r.sedang}</td><td class="num">${r.rendah}</td>
+      </tr>`).join('')
+      + `<tr class="sum-row">
+        <td>Total</td>
+        <td class="num">${tot.total}</td><td class="num">${tot.baru}</td>
+        <td class="num">${tot.diproses}</td><td class="num">${tot.selesai}</td>
+        <td class="num">${tot.tinggi}</td><td class="num">${tot.sedang}</td><td class="num">${tot.rendah}</td>
+      </tr>`;
+  }
+}
+
+function exportCSV() {
+  Api.exportCSV($('bulan').value || ym(Date.now()));
+}
+</script>
+</body>
+</html>
