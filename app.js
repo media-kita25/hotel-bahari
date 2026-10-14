@@ -93,5 +93,9 @@ const Api = (() => {
     a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
     a.download = 'rekap-aduan-' + b + '.csv'; a.click(); URL.revokeObjectURL(a.href);
   }
-  return {handle, exportCSV};
+  function subscribe(cb) {   // notifikasi realtime saat ada pengaduan baru
+    if (!sb) return null;
+    return sb.channel('aduan-baru').on('postgres_changes', {event: 'INSERT', schema: 'public', table: 'pengaduan'}, p => cb(p.new)).subscribe();
+  }
+  return {handle, exportCSV, subscribe};
 })();

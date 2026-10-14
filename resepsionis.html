@@ -47,8 +47,10 @@
           <option value="">Semua prioritas</option><option>Tinggi</option><option>Sedang</option><option>Rendah</option>
         </select>
         <input id="fq" placeholder="Cari nama/kamar/ID..." oninput="debounceDraw()">
+        <button class="btn ghost" id="btnSuara" onclick="toggleSuara()">🔔 Suara: Aktif</button>
         <button class="btn danger" onclick="hapusSelesai()">🗑 Hapus Selesai</button>
       </div>
+      <div class="note" style="margin:-4px 0 12px">Biarkan tab ini tetap terbuka. Klik sekali di halaman agar suara notifikasi aktif.</div>
       <div id="list"></div>
     </section>
 
@@ -106,6 +108,7 @@ function tampil() {
   $('keluar').classList.remove('hide');
   if (!$('bulan').value) $('bulan').value = ym(Date.now());
   draw();
+  mulaiNotif();
 }
 async function keluar() { await post(API_A, {action:'logout'}); location.reload(); }
 get(API_A, {action:'me'}).then(r => { if (r.ok) tampil(); }).catch(() => {});
@@ -121,6 +124,63 @@ function toast(msg) {
 const _api = u => u.includes('rekap') ? 'rekap' : u.includes('auth') ? 'auth' : 'pengaduan';
 async function get(url, params = {}) { return Api.handle(_api(url), params.action, params); }
 async function post(url, data) { return Api.handle(_api(url), data.action, data); }
+
+/* ================= NOTIFIKASI PENGADUAN BARU ================= */
+let ac, suaraOn = true, known = null, notifTimer, notifCount = 0;
+const judulAsli = document.title;
+try { suaraOn = localStorage.getItem('hb-suara') !== '0'; } catch (e) {}
+function aktifkanAudio() {
+  try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === 'suspended') ac.resume(); } catch (e) {}
+}
+document.addEventListener('click', aktifkanAudio);
+document.addEventListener('keydown', aktifkanAudio);
+function bunyi(mendesak) {
+  if (!suaraOn || !ac || ac.state !== 'running') return;
+  for (let i = 0; i < (mendesak ? 3 : 2); i++) {
+    [880, 660].forEach((f, j) => {
+      const t = ac.currentTime + i * 0.9 + j * 0.28, o = ac.createOscillator(), g = ac.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.4, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+      o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.3);
+    });
+  }
+}
+function updateBtnSuara() { $('btnSuara').textContent = suaraOn ? '🔔 Suara: Aktif' : '🔕 Suara: Mati'; }
+function toggleSuara() {
+  aktifkanAudio(); suaraOn = !suaraOn;
+  try { localStorage.setItem('hb-suara', suaraOn ? '1' : '0'); } catch (e) {}
+  updateBtnSuara();
+  if (suaraOn) {
+    bunyi(false);
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+  }
+}
+function adaBaru(t) {
+  if (!t || known === null || known.has(t.kode)) return;
+  known.add(t.kode); notifCount++;
+  bunyi(t.prioritas === 'Tinggi');
+  toast('Pengaduan baru ' + t.kode + ' · Kamar ' + t.kamar + ' (' + t.prioritas + ')');
+  document.title = '(' + notifCount + ') Pengaduan baru – ' + judulAsli;
+  try { if (suaraOn && document.hidden && Notification.permission === 'granted') new Notification('Pengaduan baru – Kamar ' + t.kamar, {body: t.kategori + ' · ' + t.prioritas}); } catch (e) {}
+  draw();
+}
+window.addEventListener('focus', () => { notifCount = 0; document.title = judulAsli; });
+async function cekBaru() {   // cadangan bila realtime terputus: cek tiap 20 detik
+  const l = await get(API_P, {action: 'list'});
+  if (!l.ok) return;
+  if (known === null) { known = new Set(l.data.map(x => x.kode)); return; }
+  l.data.filter(x => !known.has(x.kode)).forEach(adaBaru);
+}
+async function mulaiNotif() {
+  updateBtnSuara();
+  if (notifTimer) return;
+  notifTimer = true;
+  await cekBaru();
+  Api.subscribe(adaBaru);
+  notifTimer = setInterval(cekBaru, 20000);
+}
 
 /* ================= LOGIN ================= */
 async function masuk() {
